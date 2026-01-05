@@ -23,10 +23,11 @@ class EmojiDataset(Dataset):
 
     def __init__(
         self,
-        image_ids: List[str],
+        image_ids: Optional[List[str]] = None,
         labels: Optional[List[int]] = None,
         image_dir: Path = TRAIN_DIR,
-        transform: Optional[Callable] = None
+        transform: Optional[Callable] = None,
+        labels_df: Optional[pd.DataFrame] = None
     ):
         """
         Args:
@@ -34,11 +35,29 @@ class EmojiDataset(Dataset):
             labels: List of integer labels (None for test set)
             image_dir: Directory containing images
             transform: Transformations to apply to images
+            labels_df: DataFrame with 'Id' and 'Label' columns (alternative to image_ids/labels)
         """
-        self.image_ids = image_ids
-        self.labels = labels
         self.image_dir = Path(image_dir)
         self.transform = transform
+
+        # Support DataFrame interface
+        if labels_df is not None:
+            # Ensure ID is string
+            if 'Id' in labels_df.columns:
+                self.image_ids = labels_df['Id'].astype(str).str.zfill(5).tolist()
+            else:
+                self.image_ids = labels_df.index.astype(str).str.zfill(5).tolist()
+
+            # Convert labels to indices if needed
+            if 'label_idx' in labels_df.columns:
+                self.labels = labels_df['label_idx'].tolist()
+            elif 'Label' in labels_df.columns:
+                self.labels = labels_df['Label'].map(LABEL_TO_IDX).tolist()
+            else:
+                self.labels = None
+        else:
+            self.image_ids = image_ids if image_ids is not None else []
+            self.labels = labels
 
     def __len__(self) -> int:
         return len(self.image_ids)

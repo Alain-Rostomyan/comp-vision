@@ -9,10 +9,10 @@ SEED = 42
 
 # Paths
 PROJECT_ROOT = Path(__file__).parent.parent
-DATA_DIR = PROJECT_ROOT / "2-computer-vision-2025-b-sc-aidams-final-proj"
-TRAIN_DIR = DATA_DIR / "train"
-TEST_DIR = DATA_DIR / "test"
-TRAIN_LABELS_PATH = DATA_DIR / "train_labels.csv"
+DATA_DIR = PROJECT_ROOT  # Data is in project root
+TRAIN_DIR = PROJECT_ROOT / "train"
+TEST_DIR = PROJECT_ROOT / "test"
+TRAIN_LABELS_PATH = PROJECT_ROOT / "train_labels.csv"
 OUTPUT_DIR = PROJECT_ROOT / "outputs"
 MODEL_DIR = OUTPUT_DIR / "models"
 SUBMISSION_DIR = OUTPUT_DIR / "submissions"
