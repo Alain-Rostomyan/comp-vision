@@ -6,81 +6,21 @@ Simple CNN trained from scratch - establishing baseline performance
 import os
 import pandas as pd
 import numpy as np
-from PIL import Image
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from torchvision import transforms
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-# Configuration
-class Config:
-    # Paths - MODIFY THESE TO MATCH YOUR DIRECTORY STRUCTURE
-    # Get the directory where this script is located
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    TRAIN_DIR = os.path.join(BASE_DIR, 'train')
-    TEST_DIR = os.path.join(BASE_DIR, 'test')
-    TRAIN_LABELS = os.path.join(BASE_DIR, 'train_labels.csv')
-    SAMPLE_SUBMISSION = os.path.join(BASE_DIR, 'sample_submission.csv')
-    
-    # Model parameters
-    IMAGE_SIZE = 128
-    BATCH_SIZE = 64
-    EPOCHS = 20
-    LEARNING_RATE = 0.001
-    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # Classes
-    CLASSES = ["apple", "facebook", "google", "messenger", "mozilla", "samsung", "whatsapp"]
-    NUM_CLASSES = len(CLASSES)
-    
-    # Seed for reproducibility
-    SEED = 42
+# Import shared modules
+from common.config import Config
+from common.dataset import EmojiDataset
+from common.utils import set_seed
 
 # Set random seeds
-def set_seed(seed=42):
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
-    
 set_seed(Config.SEED)
-
-# Custom Dataset
-class EmojiDataset(Dataset):
-    def __init__(self, image_dir, labels_df=None, transform=None):
-        self.image_dir = image_dir
-        self.labels_df = labels_df
-        self.transform = transform
-        
-        if labels_df is not None:
-            self.image_ids = labels_df['Id'].values
-            self.labels = labels_df['Label'].values
-        else:
-            # For test set
-            self.image_ids = sorted([f.split('.')[0] for f in os.listdir(image_dir) if f.endswith('.png')])
-            self.labels = None
-    
-    def __len__(self):
-        return len(self.image_ids)
-    
-    def __getitem__(self, idx):
-        img_id = self.image_ids[idx]
-        # Ensure ID is zero-padded to 5 digits (e.g., 2228 -> 02228)
-        img_id_str = str(img_id).zfill(5)
-        img_path = os.path.join(self.image_dir, f"{img_id_str}.png")
-        
-        image = Image.open(img_path).convert('RGB')
-        
-        if self.transform:
-            image = self.transform(image)
-        
-        if self.labels is not None:
-            label = Config.CLASSES.index(self.labels[idx])
-            return image, label
-        else:
-            return image, img_id
 
 # Simple CNN Model
 class SimpleCNN(nn.Module):
@@ -139,7 +79,7 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
     correct = 0
     total = 0
     
-    for images, labels in tqdm(dataloader, desc='Training'):
+    for images, labels in tqdm(dataloader, desc='Training', leave=False):
         images, labels = images.to(device), labels.to(device)
         
         optimizer.zero_grad()
@@ -165,7 +105,7 @@ def validate(model, dataloader, criterion, device):
     total = 0
     
     with torch.no_grad():
-        for images, labels in tqdm(dataloader, desc='Validation'):
+        for images, labels in tqdm(dataloader, desc='Validation', leave=False):
             images, labels = images.to(device), labels.to(device)
             
             outputs = model(images)
@@ -187,7 +127,7 @@ def main():
     
     # Data transforms
     train_transform = transforms.Compose([
-        transforms.Resize((Config.IMAGE_SIZE, Config.IMAGE_SIZE)),
+        transforms.Resize((Config.IMAGE_SIZE_BASELINE, Config.IMAGE_SIZE_BASELINE)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
@@ -196,7 +136,12 @@ def main():
     train_labels = pd.read_csv(Config.TRAIN_LABELS, dtype={'Id': str})
     
     # Split into train and validation
-    train_df, val_df = train_test_split(train_labels, test_size=0.15, random_state=Config.SEED, stratify=train_labels['Label'])
+    train_df, val_df = train_test_split(
+        train_labels, 
+        test_size=Config.VAL_SPLIT, 
+        random_state=Config.SEED, 
+        stratify=train_labels['Label']
+    )
     
     print(f"Training samples: {len(train_df)}")
     print(f"Validation samples: {len(val_df)}")
@@ -206,14 +151,26 @@ def main():
     val_dataset = EmojiDataset(Config.TRAIN_DIR, val_df, transform=train_transform)
     
     # Create dataloaders
-    train_loader = DataLoader(train_dataset, batch_size=Config.BATCH_SIZE, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=Config.BATCH_SIZE, shuffle=False, num_workers=4)
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=Config.BATCH_SIZE, 
+        shuffle=True, 
+        num_workers=4
+    )
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=Config.BATCH_SIZE, 
+        shuffle=False, 
+        num_workers=4
+    )
     
     # Initialize model
     model = SimpleCNN(num_classes=Config.NUM_CLASSES).to(Config.DEVICE)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=Config.LEARNING_RATE)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=3, factor=0.5)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', patience=3, factor=0.5
+    )
     
     # Training loop
     best_acc = 0.0
@@ -231,24 +188,29 @@ def main():
         # Save best model
         if val_acc > best_acc:
             best_acc = val_acc
-            torch.save(model.state_dict(), 'day1_best_model.pth')
+            torch.save(model.state_dict(), Config.OUTPUT_DIR / 'baseline_best_model.pth')
             print(f"✓ Saved best model with accuracy: {best_acc:.2f}%")
     
     print(f"\nTraining completed! Best validation accuracy: {best_acc:.2f}%")
     
     # Generate predictions
     print("\nGenerating test predictions...")
-    model.load_state_dict(torch.load('day1_best_model.pth'))
+    model.load_state_dict(torch.load(Config.OUTPUT_DIR / 'baseline_best_model.pth'))
     model.eval()
     
     test_transform = transforms.Compose([
-        transforms.Resize((Config.IMAGE_SIZE, Config.IMAGE_SIZE)),
+        transforms.Resize((Config.IMAGE_SIZE_BASELINE, Config.IMAGE_SIZE_BASELINE)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
     test_dataset = EmojiDataset(Config.TEST_DIR, labels_df=None, transform=test_transform)
-    test_loader = DataLoader(test_dataset, batch_size=Config.BATCH_SIZE, shuffle=False, num_workers=4)
+    test_loader = DataLoader(
+        test_dataset, 
+        batch_size=Config.BATCH_SIZE, 
+        shuffle=False, 
+        num_workers=4
+    )
     
     predictions = []
     image_ids = []
@@ -265,14 +227,17 @@ def main():
     # Create submission file
     submission = pd.DataFrame({
         'Id': image_ids,
-        'Label': [predictions[i] for i in range(len(predictions))]
+        'Label': [Config.CLASSES[p] for p in predictions]
     })
     
-    submission.to_csv('submission_day1.csv', index=False)
-    print("\n✓ Submission file saved as 'submission_day1.csv'")
+    # Sort and save
+    submission['Id'] = submission['Id'].astype(str).str.zfill(5)
+    submission = submission.sort_values('Id')
+    
+    submission_path = Config.OUTPUT_DIR / 'submission_baseline.csv'
+    submission.to_csv(submission_path, index=False)
+    print(f"\n✓ Submission file saved to {submission_path}")
     print(f"Total predictions: {len(submission)}")
-    print("\nClass distribution in predictions:")
-    print(submission['Label'].value_counts().sort_index())
 
 if __name__ == '__main__':
     main()
